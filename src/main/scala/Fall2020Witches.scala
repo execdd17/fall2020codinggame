@@ -1,7 +1,54 @@
-import math._
-import scala.util._
+import scala.collection.mutable.ListBuffer
 import scala.io.StdIn._
 import scala.util.Random
+
+object GameTree {
+    case class Result(totalScore: Int, reversePath: List[String])
+
+    def bestPath(inventory: Inventory, spells: List[Action],
+                 orders: List[Action], maxDepth: Int, currDepth: Int = 0,
+                 currPath: List[String] = List.empty[String], totalScore: Int = 0): Result  = {
+
+        val readyNow = orders.filter(order => inventory.canSupportAction(order))
+        if (readyNow.nonEmpty) {
+            Console.err.println(s"[${readyNow.length}] orders satisfied!")
+            val highestPriceOrder = readyNow.maxBy(order => order.price)
+            Console.err.println(s"Choosing the highest price order: $highestPriceOrder")
+            return Result(totalScore + highestPriceOrder.price, s"BREW ${highestPriceOrder.actionId}" :: currPath)
+        }
+
+        if (currDepth >= maxDepth) {
+            Console.err.println("Max depth reached. Surfacing!")
+            return Result(totalScore - 1, currPath)
+        }
+
+        var bestResult: Result = Result(totalScore=Integer.MIN_VALUE, reversePath=List.empty[String])
+
+        spells.filter(_.castable).foreach { spell =>
+          if (inventory.canSupportAction(spell)) {
+              var newSpells = spells
+
+              // set spell to exhausted if it is not repeatable
+              if (!spell.repeatable)
+                newSpells = spell.copy(castable = false) :: spells.filter(_.actionId != spell.actionId)
+
+              // total score is decremented by 1 to penalize traversal
+              Console.err.println(s"Diving into spell: $spell")
+              val result =  bestPath(inventory.resolveOrder(spell), newSpells, orders,
+                  maxDepth, currDepth+1, s"CAST ${spell.actionId}" :: currPath, totalScore - 1)
+
+              if (result.totalScore > bestResult.totalScore) {
+                  Console.err.println(s"New high score: ${result.totalScore}")
+                  bestResult = result
+              }
+          } else {
+              Console.err.println(s"Skipping spell $spell because my inventory $inventory does not support it")
+          }
+        }
+
+        bestResult
+    }
+}
 
 case class Plan(moves: List[String], value: Int)
 
@@ -16,78 +63,77 @@ trait Planner {
 class EagerPlanner extends Planner {
 
     def getPlan(orders: List[Action], inventory: Inventory, spellBook: SpellBook): Plan = {
-        val maybeOrder  = orders.find(order => inventory.canSupportOrder(order))
-        
-        if (maybeOrder.nonEmpty) {
-            return Plan(
-                moves=List(s"BREW ${maybeOrder.get.actionId}"), 
-                value=calculateValue(maybeOrder.get.price, 0, 1)
+        val restPlan = Plan(
+            moves=List(s"REST"),
+            value=calculateValue(0, 0, 1)
+        )
+
+        val legalSpells = spellBook.getLegalSpells(inventory)
+
+        if (legalSpells.nonEmpty) {
+            val plans = restPlan :: legalSpells.map(spell =>
+                Plan(moves=List(s"CAST ${spell.actionId}"),
+                    value=calculateValue(0, 0, 1))
             )
-        } else if (spellBook.getRandomLegalSpell(inventory).nonEmpty) {
-            val spell = spellBook.getRandomLegalSpell(inventory).get
-            return Plan(
-                moves=List(s"CAST ${spell.actionId}"), 
-                value=calculateValue(0, 0, 1)
-            )
+            RandUtils.getRandomElement(plans, new Random())
         } else {
-            return Plan(
-                moves=List(s"REST"), 
-                value=calculateValue(0, 0, 1)
-            )
+            restPlan
         }
     }
 }
 
-class SpellBook(val casts: List[Action]) { 
+object RandUtils {
+    def getRandomElement[A](seq: Seq[A], random: Random): A = seq(random.nextInt(seq.length))
+}
+
+class SpellBook(val casts: List[Action]) {
     val random = new Random
 
     def getRandomLegalSpell(inventory: Inventory): Option[Action] = {
-        val spells = getLegalSpells(inventory) 
+        val spells = getLegalSpells(inventory)
 
         if (spells.nonEmpty)
-           Some(getRandomElement(spells, random))
-        else 
+           Some(RandUtils.getRandomElement(spells, random))
+        else
             None
     }
 
-    override def toString() = s"$casts"
+    override def toString = s"$casts"
 
-    private def getLegalSpells(inventory: Inventory): List[Action] = {
+    def getLegalSpells(inventory: Inventory): List[Action] = {
         casts.filter { cast =>
-            cast.castable && inventory.canSupportOrder(cast)
+            cast.castable && inventory.canSupportAction(cast)
         }
     }
-
-    private def getRandomElement[A](seq: Seq[A], random: Random): A = seq(random.nextInt(seq.length))
 }
 
 class Inventory(var blue: Int, var orange: Int, var green: Int, var mustard: Int) {
     val MAX_SIZE = 10
 
     def resolveOrder(order: Action): Inventory = {
-        blue -= order.delta0
-        orange -= order.delta1
-        green -= order.delta2
-        mustard -= order.delta3
-
-        this
+        new Inventory(
+            blue = blue + order.delta0,
+            orange = orange + order.delta1,
+            green = green + order.delta2,
+            mustard = mustard + order.delta3
+        )
     }
 
     // this is addition because the deltas are negative
-    def canSupportOrder(order: Action): Boolean = {
-        val newSize = blue + order.delta0 + orange + order.delta1 + 
-            green + order.delta2 + mustard + order.delta3
+    def canSupportAction(action: Action): Boolean = {
+        val newSize = blue + action.delta0 + orange + action.delta1 +
+            green + action.delta2 + mustard + action.delta3
 
-        blue + order.delta0 >= 0 &&
-        orange + order.delta1 >= 0 &&
-        green + order.delta2 >= 0 &&
-        mustard + order.delta3 >= 0 &&
+        blue + action.delta0 >= 0 &&
+        orange + action.delta1 >= 0 &&
+        green + action.delta2 >= 0 &&
+        mustard + action.delta3 >= 0 &&
         newSize <= MAX_SIZE
     }
 
     def totalSize: Int = blue + orange + green + mustard
 
-    override def toString() = s"blue:$blue orange:$orange green:$green mustard:$mustard"
+    override def toString = s"blue:$blue orange:$orange green:$green mustard:$mustard"
 }
 
 case class Action(
@@ -173,10 +219,21 @@ object Player extends App {
         // To debug: Console.err.println("Debug messages...")
         val myInventory = new Inventory(inv0, inv1, inv2, inv3)
         val me = new Witch(myInventory, spellBook=new SpellBook(actions.filter(_.actionType == "CAST")))
+        val result = GameTree.bestPath(
+            inventory = myInventory,
+            spells = actions.filter(_.actionType == "CAST"),
+            orders = actions.filter(_.actionType == "BREW"),
+            maxDepth = 100
+        )
+
         Console.err.println(me.toString())
+        Console.err.println(result.reversePath.reverse)
         val move = me.evaluateRound(actions.filter(_.actionType == "BREW"))
 
         // in the first league: BREW <id> | WAIT; later: BREW <id> | CAST <id> [<times>] | LEARN <id> | REST | WAIT
-        println(move)
+        if (result.reversePath.nonEmpty)
+            println(result.reversePath.reverse.head)
+        else
+            println(move)
     }
 }
