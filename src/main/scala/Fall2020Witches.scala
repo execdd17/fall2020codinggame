@@ -11,15 +11,15 @@ object GameTree {
 
         val readyNow = orders.filter(order => inventory.canSupportAction(order))
         if (readyNow.nonEmpty) {
-            Console.err.println(s"[${readyNow.length}] orders satisfied!")
+//            Console.err.println(s"[${readyNow.length}] orders satisfied!")
             val highestPriceOrder = readyNow.maxBy(order => order.price)
-            Console.err.println(s"Choosing the highest price order: $highestPriceOrder")
+//            Console.err.println(s"Choosing the highest price order: $highestPriceOrder")
             return Result(totalScore + highestPriceOrder.price, s"BREW ${highestPriceOrder.actionId}" :: currPath)
         }
 
         if (currDepth >= maxDepth) {
-            Console.err.println("Max depth reached. Surfacing!")
-            return Result(totalScore - 1, currPath)
+//            Console.err.println("Max depth reached. Surfacing!")
+            return Result(totalScore - 1, List.empty[String])
         }
 
         var bestResult: Result = Result(totalScore=Integer.MIN_VALUE, reversePath=List.empty[String])
@@ -32,17 +32,17 @@ object GameTree {
               if (!spell.repeatable)
                 newSpells = spell.copy(castable = false) :: spells.filter(_.actionId != spell.actionId)
 
-              // total score is decremented by 1 to penalize traversal
-              Console.err.println(s"Diving into spell: $spell")
+//              Console.err.println(s"Diving into spell: $spell")
+              val penalty = Math.pow(1.8, currDepth).toInt
               val result =  bestPath(inventory.resolveOrder(spell), newSpells, orders,
-                  maxDepth, currDepth+1, s"CAST ${spell.actionId}" :: currPath, totalScore - 1)
+                  maxDepth, currDepth+1, s"CAST ${spell.actionId}" :: currPath, totalScore - penalty)
 
               if (result.totalScore > bestResult.totalScore) {
-                  Console.err.println(s"New high score: ${result.totalScore}")
+//                  Console.err.println(s"New high score: ${result.totalScore}")
                   bestResult = result
               }
           } else {
-              Console.err.println(s"Skipping spell $spell because my inventory $inventory does not support it")
+//              Console.err.println(s"Skipping spell $spell because my inventory $inventory does not support it")
           }
         }
 
@@ -75,7 +75,9 @@ class EagerPlanner extends Planner {
                 Plan(moves=List(s"CAST ${spell.actionId}"),
                     value=calculateValue(0, 0, 1))
             )
-            RandUtils.getRandomElement(plans, new Random())
+            val choice = RandUtils.getRandomElement(plans, new Random())
+            Console.err.println(s"Chose ${choice.moves.head} from $plans")
+            choice
         } else {
             restPlan
         }
@@ -168,6 +170,8 @@ class Witch(val inventory: Inventory, val spellBook: SpellBook) {
  **/
 object Player extends App {
 
+    var totalLearned = 0
+
     // game loop
     while(true) {
         val actionCount = readLine.toInt // the number of spells and recipes in play
@@ -218,22 +222,26 @@ object Player extends App {
         // Write an action using println
         // To debug: Console.err.println("Debug messages...")
         val myInventory = new Inventory(inv0, inv1, inv2, inv3)
-        val me = new Witch(myInventory, spellBook=new SpellBook(actions.filter(_.actionType == "CAST")))
-        val result = GameTree.bestPath(
-            inventory = myInventory,
-            spells = actions.filter(_.actionType == "CAST"),
-            orders = actions.filter(_.actionType == "BREW"),
-            maxDepth = 100
-        )
 
-        Console.err.println(me.toString())
+        val spells = actions.filter(_.actionType == "CAST")
+        val orders = actions.filter(_.actionType == "BREW")
+
+        val result = GameTree.bestPath(myInventory, spells, orders, maxDepth = 7)
+
+//        Console.err.println(me.toString())
         Console.err.println(result.reversePath.reverse)
-        val move = me.evaluateRound(actions.filter(_.actionType == "BREW"))
 
         // in the first league: BREW <id> | WAIT; later: BREW <id> | CAST <id> [<times>] | LEARN <id> | REST | WAIT
-        if (result.reversePath.nonEmpty)
+        if (result.reversePath.nonEmpty) {
             println(result.reversePath.reverse.head)
-        else
+        } else if (totalLearned < 7) {
+            totalLearned += 1
+            val tomes =  actions.filter(_.actionType == "LEARN")
+            println(s"LEARN ${tomes.last.actionId}")
+        } else {
+            val me = new Witch(myInventory, spellBook=new SpellBook(spells))
+            val move = me.evaluateRound(actions.filter(_.actionType == "BREW"))
             println(move)
+        }
     }
 }
